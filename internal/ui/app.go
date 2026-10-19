@@ -29,15 +29,19 @@ type App struct {
 	tv    *walk.TableView
 	model *fileModel
 
-	emptyHint, bottomBar                   *walk.Composite
-	listCount, sortInfo, status            *walk.Label
-	progress                               *walk.ProgressBar
-	btnRename, btnUndo                     *walk.PushButton
-	btnAddFiles, btnAddFolder              *walk.PushButton
-	btnUp, btnDown, btnRemove, btnClear    *walk.PushButton
-	cbRecursive                            *walk.CheckBox
-	rulesPanel                             *walk.ScrollView
-	btnRulesOff, btnRulesReset             *walk.PushButton
+	d                                   *dupesPage
+	mode                                string
+	renamePage, renameTools             *walk.Composite
+	rbModeRename, rbModeDupes           *walk.RadioButton
+	emptyHint, bottomBar                *walk.Composite
+	listCount, sortInfo, status         *walk.Label
+	progress                            *walk.ProgressBar
+	btnRename, btnUndo                  *walk.PushButton
+	btnAddFiles, btnAddFolder           *walk.PushButton
+	btnUp, btnDown, btnRemove, btnClear *walk.PushButton
+	cbRecursive                         *walk.CheckBox
+	rulesPanel                          *walk.ScrollView
+	btnRulesOff, btnRulesReset          *walk.PushButton
 
 	// 1. 찾아 바꾸기
 	cbReplace, cbMatchCase, cbRegex, cbIncludeExt *walk.CheckBox
@@ -64,19 +68,20 @@ type App struct {
 	leNewExt        *walk.LineEdit
 	cbHangul        *walk.CheckBox
 
-	settings     Settings
-	loading      bool // widgets are being filled from code: ignore their events
-	busy         bool
-	ruleErr      string
-	summary      engine.Summary
-	known        map[string]bool     // path keys already in the list
-	dirCache     map[string][]string // folder listings for conflict checks
-	undo         [][]engine.OpResult
-	takenPending int
-	timerMu      sync.Mutex
-	refreshTimer *time.Timer
-	flash        string // one-off message shown until the next change
-	flashGood    bool
+	settings       Settings
+	loading        bool // widgets are being filled from code: ignore their events
+	busy           bool
+	ruleErr        string
+	summary        engine.Summary
+	known          map[string]bool     // path keys already in the list
+	dirCache       map[string][]string // folder listings for conflict checks
+	undo           [][]engine.OpResult
+	takenPending   int
+	timerMu        sync.Mutex
+	refreshTimer   *time.Timer
+	repaintPending bool
+	flash          string // one-off message shown until the next change
+	flashGood      bool
 }
 
 // Run starts NameSmith with optional files/folders to open. It returns the
@@ -112,6 +117,18 @@ func Run(args []string) (code int) {
 		settings: loadSettings(),
 	}
 	a.model.onChange = a.changed
+	a.d = newDupesPage(a)
+
+	mode, paths, autoScan := "rename", args, false
+	if a.settings.Mode == "dupes" {
+		mode = "dupes"
+	}
+	if len(args) > 0 {
+		mode = "rename"
+		if args[0] == "--dupes" {
+			mode, paths, autoScan = "dupes", args[1:], len(args) > 1
+		}
+	}
 
 	// Finish a rename that was interrupted last time (power cut, crash...).
 	fixed, problems := recoverJournals()
@@ -122,6 +139,7 @@ func Run(args []string) (code int) {
 		return 1
 	}
 	a.applySettings()
+	a.d.afterCreate(a.settings)
 	a.loading = false
 
 	// walk always creates a tool bar and a menu bar; we use neither.
@@ -131,21 +149,38 @@ func Run(args []string) (code int) {
 		_ = a.mw.SetIcon(icon)
 	}
 	a.mw.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
-		if a.busy {
-			*canceled = true
+		if a.busy || (a.d.busy && a.d.cancel == nil) {
+			*canceled = true // never stop in the middle of renaming or moving files
 			return
+		}
+		if a.d.cancel != nil {
+			a.d.cancel()
 		}
 		a.saveSettings()
 	})
 
-	a.placeWindow()
-	// Hide these only now: walk ignores SetVisible(false) while the window
-	// itself is still hidden.
-	if tb := a.mw.ToolBar(); tb != nil {
-		win.ShowWindow(tb.Handle(), win.SW_HIDE)
+	// walk ignores SetVisible(false) while the window itself is still
+	// hidden, so widgets that start hidden are hidden directly. (Otherwise
+	// the hidden page would count when the window size is worked out.)
+	hide := func(ws ...walk.Window) {
+		for _, w := range ws {
+			win.ShowWindow(w.Handle(), win.SW_HIDE)
+		}
 	}
-	win.ShowWindow(a.progress.Handle(), win.SW_HIDE)
-	a.fixListImages()
+	if tb := a.mw.ToolBar(); tb != nil {
+		hide(tb)
+	}
+	hide(a.progress, a.d.progress, a.d.btnCancel)
+	if mode == "dupes" {
+		hide(a.renamePage, a.renameTools)
+	} else {
+		hide(a.d.page)
+	}
+	a.fixListImages(a.tv)
+	a.fixListImages(a.d.tv)
+	pushLike(a.rbModeRename, a.rbModeDupes)
+	a.placeWindow()
+	a.setMode(mode)
 	a.refresh()
 
 	if fixed > 0 || len(problems) > 0 {
@@ -155,20 +190,90 @@ func Run(args []string) (code int) {
 		}
 		walk.MsgBox(a.mw, appName, msg, walk.MsgBoxIconInformation)
 	}
-	if len(args) > 0 {
-		a.addPaths(args)
+	if len(paths) > 0 {
+		if mode == "dupes" {
+			a.d.addRoots(paths)
+			if autoScan {
+				a.d.startScan()
+			}
+		} else {
+			a.addPaths(paths)
+		}
 	}
 	return wapp.Run()
 }
 
+// setMode shows the "이름 바꾸기" or the "중복 파일 찾기" page.
+func (a *App) setMode(mode string) {
+	if mode != "dupes" {
+		mode = "rename"
+	}
+	a.mode = mode
+	rename := mode == "rename"
+	a.rbModeRename.SetChecked(rename)
+	a.rbModeDupes.SetChecked(!rename)
+	a.renamePage.SetVisible(rename)
+	a.renameTools.SetVisible(rename)
+	a.d.page.SetVisible(!rename)
+	if rename {
+		a.mw.SetTitle(appTitle)
+		a.updateChrome(a.readRules())
+	} else {
+		a.mw.SetTitle("NameSmith - 중복 파일 찾기")
+		a.d.updateChrome()
+	}
+	a.repaintSoon()
+}
+
+// repaintSoon redraws the whole window once a new layout is in place
+// (some systems leave bits of moved controls on screen otherwise). Calls
+// close together are merged into one redraw.
+func (a *App) repaintSoon() {
+	a.timerMu.Lock()
+	if a.repaintPending {
+		a.timerMu.Unlock()
+		return
+	}
+	a.repaintPending = true
+	a.timerMu.Unlock()
+	time.AfterFunc(150*time.Millisecond, func() {
+		a.app.Synchronize(func() {
+			a.timerMu.Lock()
+			a.repaintPending = false
+			a.timerMu.Unlock()
+			const flags = 0x0001 | 0x0004 | 0x0080 | 0x0400 // INVALIDATE | ERASE | ALLCHILDREN | FRAME
+			win.RedrawWindow(a.mw.Handle(), nil, 0, flags)
+		})
+	})
+}
+
+// onDrop sends dropped files to the page that is showing.
+func (a *App) onDrop(files []string) {
+	if a.mode == "dupes" {
+		a.d.addRoots(files)
+		return
+	}
+	a.addPaths(files)
+}
+
+// pushLike makes radio buttons look like toggle buttons.
+func pushLike(rbs ...*walk.RadioButton) {
+	for _, rb := range rbs {
+		h := rb.Handle()
+		style := win.GetWindowLong(h, win.GWL_STYLE)
+		win.SetWindowLong(h, win.GWL_STYLE, style|win.BS_PUSHLIKE)
+		rb.Invalidate()
+	}
+}
+
 // fixListImages keeps file icons in the first column only (walk would
 // repeat the first icon in every column).
-func (a *App) fixListImages() {
+func (a *App) fixListImages(tv *walk.TableView) {
 	findEx := windows.NewLazySystemDLL("user32.dll").NewProc("FindWindowExW")
 	class, _ := syscall.UTF16PtrFromString("SysListView32")
 	var child uintptr
 	for i := 0; i < 4; i++ {
-		child, _, _ = findEx.Call(uintptr(a.tv.Handle()), child, uintptr(unsafe.Pointer(class)), 0)
+		child, _, _ = findEx.Call(uintptr(tv.Handle()), child, uintptr(unsafe.Pointer(class)), 0)
 		if child == 0 {
 			break
 		}
@@ -226,6 +331,8 @@ func minInt(a, b int) int {
 
 func (a *App) saveSettings() {
 	s := a.settings
+	s.Mode = a.mode
+	a.d.saveTo(&s)
 	s.Rules = a.readRules()
 	s.Recursive = a.cbRecursive.Checked()
 	s.Maximized = win.IsZoomed(a.mw.Handle())
@@ -961,7 +1068,11 @@ func limitLines(lines []string, n int) []string {
 func (a *App) onLink(link *walk.LinkLabelLink) {
 	switch link.Id() {
 	case "help":
-		openURL(helpURL)
+		if a.mode == "dupes" {
+			openURL(dupesHelp)
+		} else {
+			openURL(helpURL)
+		}
 	case "site":
 		openURL(repoURL)
 	case "logs":

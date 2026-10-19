@@ -1,6 +1,6 @@
-// Package meta reads the date a photo or video was taken, straight from the
-// file: EXIF in JPEG/TIFF/camera RAW/HEIC/AVIF/PNG/WebP, and the creation
-// time of MP4/MOV videos. It reads only small parts of each file and never
+// Package meta reads the date a photo or video was taken (and the EXIF
+// orientation of photos), straight from the file: EXIF in JPEG/TIFF/camera
+// RAW/HEIC/AVIF/PNG/WebP, and the creation time of MP4/MOV videos. It reads only small parts of each file and never
 // fails loudly: anything unexpected just means "no date".
 package meta
 
@@ -27,32 +27,53 @@ var mediaExts = map[string]bool{
 // IsMedia reports whether the file name looks like a photo or video.
 func IsMedia(name string) bool { return mediaExts[strings.ToLower(filepath.Ext(name))] }
 
-// DateTaken returns when the photo or video at path was taken.
-func DateTaken(path string) (time.Time, bool) {
+// Info is what Read finds in a photo or video.
+type Info struct {
+	Taken       time.Time // when it was taken
+	HasTaken    bool
+	Orientation int // EXIF orientation 1-8 (0 = not stored)
+}
+
+// Read returns the capture date and EXIF orientation of the photo or video
+// at path. Missing or broken metadata simply gives a zero Info.
+func Read(path string) Info {
 	if !IsMedia(path) {
-		return time.Time{}, false
+		return Info{}
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return time.Time{}, false
+		return Info{}
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		return time.Time{}, false
+		return Info{}
 	}
-	t, ok := detect(f, st.Size())
-	if !ok || !plausible(t) {
-		return time.Time{}, false
+	var p parser
+	t, ok := p.detect(f, st.Size())
+	info := Info{Orientation: p.orient}
+	if ok && plausible(t) {
+		info.Taken, info.HasTaken = t, true
 	}
-	return t, true
+	return info
+}
+
+// DateTaken returns when the photo or video at path was taken.
+func DateTaken(path string) (time.Time, bool) {
+	i := Read(path)
+	return i.Taken, i.HasTaken
+}
+
+// parser remembers what it saw while looking for the date.
+type parser struct {
+	orient int
 }
 
 func plausible(t time.Time) bool {
 	return t.Year() >= 1980 && t.Before(time.Now().AddDate(1, 0, 0))
 }
 
-func detect(r io.ReaderAt, size int64) (t time.Time, ok bool) {
+func (p *parser) detect(r io.ReaderAt, size int64) (t time.Time, ok bool) {
 	defer func() {
 		if recover() != nil {
 			t, ok = time.Time{}, false
@@ -63,15 +84,15 @@ func detect(r io.ReaderAt, size int64) (t time.Time, ok bool) {
 	head = head[:n]
 	switch {
 	case len(head) >= 3 && head[0] == 0xFF && head[1] == 0xD8 && head[2] == 0xFF:
-		return fromJPEG(r, size)
+		return p.fromJPEG(r, size)
 	case len(head) >= 4 && (string(head[:2]) == "II" || string(head[:2]) == "MM"):
-		return fromTIFF(r, 0, size)
+		return p.fromTIFF(r, 0, size)
 	case len(head) >= 8 && bytes.Equal(head[:8], []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'}):
-		return fromPNG(r, size)
+		return p.fromPNG(r, size)
 	case len(head) >= 12 && string(head[:4]) == "RIFF" && string(head[8:12]) == "WEBP":
-		return fromWebP(r, size)
+		return p.fromWebP(r, size)
 	case len(head) >= 8 && isBoxType(head[4:8]):
-		return fromISOBMFF(r, size)
+		return p.fromISOBMFF(r, size)
 	}
 	return time.Time{}, false
 }
@@ -80,7 +101,7 @@ func detect(r io.ReaderAt, size int64) (t time.Time, ok bool) {
 
 // fromTIFF parses a TIFF structure starting at base and returns
 // DateTimeOriginal, DateTimeDigitized or DateTime (in that order).
-func fromTIFF(r io.ReaderAt, base, size int64) (time.Time, bool) {
+func (p *parser) fromTIFF(r io.ReaderAt, base, size int64) (time.Time, bool) {
 	hdr := make([]byte, 8)
 	if _, err := r.ReadAt(hdr, base); err != nil {
 		return time.Time{}, false
@@ -97,6 +118,11 @@ func fromTIFF(r io.ReaderAt, base, size int64) (time.Time, bool) {
 	ifd0 := int64(bo.Uint32(hdr[4:8]))
 
 	tags0 := readIFD(r, bo, base, ifd0, size)
+	if v, ok := tags0[0x0112]; ok && v.typ == 3 && p.orient == 0 {
+		if o := int(bo.Uint16(v.raw[:2])); o >= 1 && o <= 8 {
+			p.orient = o
+		}
+	}
 	var original, digitized, plain string
 	if v, ok := tags0[0x0132]; ok {
 		plain = readASCII(r, bo, base, v, size)
@@ -147,7 +173,7 @@ func readIFD(r io.ReaderAt, bo binary.ByteOrder, base, off, size int64) map[uint
 		e := buf[12*i : 12*i+12]
 		tag := bo.Uint16(e[0:2])
 		switch tag {
-		case 0x0132, 0x8769, 0x9003, 0x9004:
+		case 0x0112, 0x0132, 0x8769, 0x9003, 0x9004:
 			var en ifdEntry
 			en.typ = bo.Uint16(e[2:4])
 			en.count = bo.Uint32(e[4:8])
@@ -220,7 +246,7 @@ func parseExifTime(s string) (time.Time, bool) {
 
 // ---------- JPEG ----------
 
-func fromJPEG(r io.ReaderAt, size int64) (time.Time, bool) {
+func (p *parser) fromJPEG(r io.ReaderAt, size int64) (time.Time, bool) {
 	pos := int64(2)
 	hdr := make([]byte, 4)
 	for steps := 0; steps < 64 && pos+4 <= size && pos < 1<<20; steps++ {
@@ -254,7 +280,7 @@ func fromJPEG(r io.ReaderAt, size int64) (time.Time, bool) {
 				if limit > size {
 					limit = size
 				}
-				if t, ok := fromTIFF(r, tiffBase, limit); ok {
+				if t, ok := p.fromTIFF(r, tiffBase, limit); ok {
 					return t, true
 				}
 			}
@@ -266,7 +292,7 @@ func fromJPEG(r io.ReaderAt, size int64) (time.Time, bool) {
 
 // ---------- PNG ----------
 
-func fromPNG(r io.ReaderAt, size int64) (time.Time, bool) {
+func (p *parser) fromPNG(r io.ReaderAt, size int64) (time.Time, bool) {
 	pos := int64(8)
 	hdr := make([]byte, 8)
 	for steps := 0; steps < 10000 && pos+8 <= size; steps++ {
@@ -276,7 +302,7 @@ func fromPNG(r io.ReaderAt, size int64) (time.Time, bool) {
 		n := int64(binary.BigEndian.Uint32(hdr[0:4]))
 		typ := string(hdr[4:8])
 		if typ == "eXIf" {
-			return fromTIFF(r, pos+8, min64(size, pos+8+n))
+			return p.fromTIFF(r, pos+8, min64(size, pos+8+n))
 		}
 		if typ == "IEND" {
 			break
@@ -288,7 +314,7 @@ func fromPNG(r io.ReaderAt, size int64) (time.Time, bool) {
 
 // ---------- WebP ----------
 
-func fromWebP(r io.ReaderAt, size int64) (time.Time, bool) {
+func (p *parser) fromWebP(r io.ReaderAt, size int64) (time.Time, bool) {
 	pos := int64(12)
 	hdr := make([]byte, 8)
 	for steps := 0; steps < 1000 && pos+8 <= size; steps++ {
@@ -302,7 +328,7 @@ func fromWebP(r io.ReaderAt, size int64) (time.Time, bool) {
 			if _, err := r.ReadAt(sig, start); err == nil && string(sig[:4]) == "Exif" {
 				start += 6
 			}
-			return fromTIFF(r, start, min64(size, pos+8+n))
+			return p.fromTIFF(r, start, min64(size, pos+8+n))
 		}
 		pos += 8 + n + (n & 1)
 	}
@@ -320,10 +346,10 @@ func isBoxType(b []byte) bool {
 }
 
 type box struct {
-	typ        string
-	start      int64 // offset of the box header
-	dataStart  int64 // offset of the payload
-	end        int64 // offset just past the box
+	typ       string
+	start     int64 // offset of the box header
+	dataStart int64 // offset of the payload
+	end       int64 // offset just past the box
 }
 
 // boxes lists the boxes between start and end.
@@ -370,10 +396,10 @@ func find(bs []box, typ string) (box, bool) {
 	return box{}, false
 }
 
-func fromISOBMFF(r io.ReaderAt, size int64) (time.Time, bool) {
+func (p *parser) fromISOBMFF(r io.ReaderAt, size int64) (time.Time, bool) {
 	top := boxes(r, 0, size)
 	if meta, ok := find(top, "meta"); ok {
-		if t, ok := fromHEIFMeta(r, meta, size); ok {
+		if t, ok := p.fromHEIFMeta(r, meta, size); ok {
 			return t, true
 		}
 	}
@@ -405,7 +431,7 @@ func fromMVHD(r io.ReaderAt, b box) (time.Time, bool) {
 }
 
 // fromHEIFMeta finds the "Exif" item in a HEIF meta box and parses it.
-func fromHEIFMeta(r io.ReaderAt, meta box, size int64) (time.Time, bool) {
+func (p *parser) fromHEIFMeta(r io.ReaderAt, meta box, size int64) (time.Time, bool) {
 	kids := boxes(r, meta.dataStart+4, meta.end) // meta is a full box
 	iinf, ok1 := find(kids, "iinf")
 	iloc, ok2 := find(kids, "iloc")
@@ -433,7 +459,7 @@ func fromHEIFMeta(r io.ReaderAt, meta box, size int64) (time.Time, bool) {
 	if skip > 64 || tiff >= off+length {
 		return time.Time{}, false
 	}
-	return fromTIFF(r, tiff, off+length)
+	return p.fromTIFF(r, tiff, off+length)
 }
 
 func exifItemID(r io.ReaderAt, iinf box) (uint32, bool) {

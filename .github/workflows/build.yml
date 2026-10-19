@@ -53,7 +53,7 @@ jobs:
           go build -trimpath -ldflags "-s -w -H windowsgui -X github.com/game-addicted-man/NameSmith/internal/ui.Version=${{ steps.v.outputs.ver }}" -o dist/NameSmith.exe ./cmd/NameSmith 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\build.log"
           if ($LASTEXITCODE -ne 0) { ./build/ci-fail.ps1 "Build" "$env:RUNNER_TEMP\build.log"; exit 1 }
 
-      - name: UI test (rename 31 files, undo, close)
+      - name: UI test (rename 31 files + undo, find duplicates + recycle)
         shell: pwsh
         run: |
           go run ./tools/uitest -exe dist\NameSmith.exe -out dist\uitest 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\uitest.log"
@@ -85,11 +85,17 @@ jobs:
           Start-Process $setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=desktopicon,foldermenu,sendto' -Wait
           $dir = Join-Path $env:LOCALAPPDATA "Programs\NameSmith"
           if (-not (Test-Path "$dir\NameSmith.exe")) { throw "not installed in $dir" }
-          if (-not (Test-Path "HKCU:\Software\Classes\Directory\shell\NameSmith\command")) { throw "folder menu missing" }
+          foreach ($k in "Directory\shell\NameSmith", "Directory\Background\shell\NameSmith", "Directory\shell\NameSmithDupes", "Directory\Background\shell\NameSmithDupes") {
+            if (-not (Test-Path "HKCU:\Software\Classes\$k\command")) { throw "folder menu missing: $k" }
+          }
+          $dupesCmd = (Get-ItemProperty "HKCU:\Software\Classes\Directory\shell\NameSmithDupes\command").'(default)'
+          if ($dupesCmd -notmatch '--dupes') { throw "duplicate finder menu has the wrong command: $dupesCmd" }
           Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait
           for ($i = 0; $i -lt 30 -and (Test-Path "$dir\NameSmith.exe"); $i++) { Start-Sleep 1 }
           if (Test-Path "$dir\NameSmith.exe") { throw "uninstall left files behind" }
-          if (Test-Path "HKCU:\Software\Classes\Directory\shell\NameSmith") { throw "uninstall left the folder menu" }
+          foreach ($k in "Directory\shell\NameSmith", "Directory\Background\shell\NameSmith", "Directory\shell\NameSmithDupes", "Directory\Background\shell\NameSmithDupes") {
+            if (Test-Path "HKCU:\Software\Classes\$k") { throw "uninstall left the folder menu: $k" }
+          }
           "install / uninstall OK"
 
       - uses: actions/upload-artifact@v4

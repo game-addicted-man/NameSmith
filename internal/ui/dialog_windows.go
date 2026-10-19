@@ -60,6 +60,10 @@ type comObject struct {
 	vtbl *[32]uintptr
 }
 
+// call invokes a COM method. uintptrescapes keeps pointer arguments on the
+// heap and alive during the call.
+//
+//go:uintptrescapes
 func (o *comObject) call(slot int, args ...uintptr) uint32 {
 	all := make([]uintptr, 0, len(args)+1)
 	all = append(all, uintptr(unsafe.Pointer(o)))

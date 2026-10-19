@@ -16,6 +16,17 @@ type Settings struct {
 	Bounds    []int        `json:"bounds,omitempty"` // x, y, width, height (96 DPI units)
 	Maximized bool         `json:"maximized"`
 	LastDir   string       `json:"lastDir"`
+	Mode      string       `json:"mode"` // "rename" or "dupes"
+
+	// 중복 파일 찾기 (stored as "off" flags so that a missing value means on)
+	DupeNoExact     bool     `json:"dupeNoExact"`
+	DupeNoSimilar   bool     `json:"dupeNoSimilar"`
+	DupeNoRecursive bool     `json:"dupeNoRecursive"`
+	DupeKind        int      `json:"dupeKind"`
+	DupeLevel       int      `json:"dupeLevel"`
+	DupeLevelSet    bool     `json:"dupeLevelSet"`
+	DupeKeep        int      `json:"dupeKeep"`
+	DupeRoots       []string `json:"dupeRoots"`
 }
 
 func settingsPath() string { return filepath.Join(configDir(), "settings.json") }

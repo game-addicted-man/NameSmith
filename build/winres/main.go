@@ -38,7 +38,7 @@ func main() {
 	}
 
 	rs.SetManifest(winres.AppManifest{
-		Description:         "NameSmith - 파일 이름 일괄 변경기",
+		Description:         "NameSmith - 파일 이름 일괄 변경기 · 중복 파일 찾기",
 		Compatibility:       winres.Win7AndAbove,
 		ExecutionLevel:      winres.AsInvoker,
 		DPIAwareness:        winres.DPIPerMonitorV2,
@@ -51,7 +51,7 @@ func main() {
 	vi.SetProductVersion(*ver)
 	const ko = 0x0412 // Korean
 	for _, lang := range []uint16{version.LangDefault, ko} {
-		must(vi.Set(lang, version.FileDescription, "NameSmith - 파일 이름 일괄 변경기"))
+		must(vi.Set(lang, version.FileDescription, "NameSmith - 파일 이름 일괄 변경기 · 중복 파일 찾기"))
 		must(vi.Set(lang, version.ProductName, "NameSmith"))
 		must(vi.Set(lang, version.CompanyName, "game-addicted-man"))
 		must(vi.Set(lang, version.LegalCopyright, "© 2026 Jonghoon Lee · MIT License"))

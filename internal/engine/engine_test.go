@@ -26,7 +26,7 @@ func newName(t *testing.T, r Rules, name string, num int) string {
 
 func TestSplitName(t *testing.T) {
 	cases := map[string][2]string{
-		"사진.jpg":        {"사진", ".jpg"},
+		"사진.jpg":         {"사진", ".jpg"},
 		"archive.tar.gz": {"archive.tar", ".gz"},
 		".gitignore":     {".gitignore", ""},
 		"README":         {"README", ""},

@@ -18,18 +18,27 @@ var (
 	colAccent = walk.RGB(29, 78, 216)
 	colGreen  = walk.RGB(21, 128, 61)
 	colRed    = walk.RGB(185, 28, 28)
-		colGrayFg = walk.RGB(150, 155, 162)
+	colGrayFg = walk.RGB(150, 155, 162)
 )
+
+// stockWhite is the system's white brush, used behind the link labels on
+// the white bottom bars. Some link controls (Wine's, for one) delete the
+// brush they are handed for their background; a stock brush can't be
+// deleted, so the bar's own brush is never handed out and lost.
+type stockWhite struct{}
+
+func (stockWhite) Create() (walk.Brush, error) { return walk.WhiteBrush(), nil }
 
 const uiFont = "Malgun Gothic"
 
 var (
-	fontBase   = Font{Family: uiFont, PointSize: 9}
-	fontSmall  = Font{Family: uiFont, PointSize: 8}
-	fontHeader = Font{Family: uiFont, PointSize: 10, Bold: true}
-	fontTitle  = Font{Family: uiFont, PointSize: 15, Bold: true}
-	fontHint   = Font{Family: uiFont, PointSize: 13, Bold: true}
-	fontButton = Font{Family: uiFont, PointSize: 10, Bold: true}
+	fontBase    = Font{Family: uiFont, PointSize: 9}
+	fontSmall   = Font{Family: uiFont, PointSize: 8}
+	fontHeader  = Font{Family: uiFont, PointSize: 10, Bold: true}
+	fontTitle   = Font{Family: uiFont, PointSize: 15, Bold: true}
+	fontHint    = Font{Family: uiFont, PointSize: 13, Bold: true}
+	fontButton  = Font{Family: uiFont, PointSize: 10, Bold: true}
+	fontModeTab = Font{Family: uiFont, PointSize: 10, Bold: true}
 )
 
 // card is one rule section: a bold check box title, a short explanation
@@ -78,7 +87,7 @@ func (a *App) build() error {
 				CheckBox{AssignTo: &a.cbMatchCase, Text: "대·소문자 구분", OnCheckedChanged: func() { a.touch(a.cbReplace) }},
 				CheckBox{AssignTo: &a.cbIncludeExt, Text: "확장자에도 적용", OnCheckedChanged: func() { a.touch(a.cbReplace) }},
 				CheckBox{AssignTo: &a.cbRegex, Text: "정규식",
-					ToolTipText: "고급: 정규 표현식으로 찾아요. 바꿀 글자에 $1, $2로 괄호 안 내용을 쓸 수 있어요.",
+					ToolTipText:      "고급: 정규 표현식으로 찾아요. 바꿀 글자에 $1, $2로 괄호 안 내용을 쓸 수 있어요.",
 					OnCheckedChanged: func() { a.touch(a.cbReplace) }},
 				HSpacer{},
 			),
@@ -109,8 +118,8 @@ func (a *App) build() error {
 					OnCurrentIndexChanged: func() { a.touch(a.cbDate) }},
 				fieldLabel("형식"),
 				ComboBox{AssignTo: &a.cmbDateFormat, Editable: true,
-					Model:       datePresetFormats(),
-					ToolTipText: "YYYY 연도 · MM 월 · DD 일 · HH 시 · mm 분 · ss 초 · ddd 요일\n직접 입력해도 돼요. 예: YYYY년 M월 D일",
+					Model:                 datePresetFormats(),
+					ToolTipText:           "YYYY 연도 · MM 월 · DD 일 · HH 시 · mm 분 · ss 초 · ddd 요일\n직접 입력해도 돼요. 예: YYYY년 M월 D일",
 					OnTextChanged:         func() { a.touch(a.cbDate) },
 					OnCurrentIndexChanged: func() { a.touch(a.cbDate) }},
 				Label{Text: ""},
@@ -215,17 +224,15 @@ func (a *App) build() error {
 	}
 
 	return MainWindow{
-		AssignTo:   &a.mw,
-		Title:      appTitle,
-		Size:       Size{Width: 1240, Height: 800},
-		MinSize:    Size{Width: 900, Height: 580},
-		Visible:    false,
-		Font:       fontBase,
-		Background: SolidColorBrush{Color: colBg},
-		Layout:     VBox{MarginsZero: true, SpacingZero: true},
-		OnDropFiles: func(files []string) {
-			a.addPaths(files)
-		},
+		AssignTo:    &a.mw,
+		Title:       appTitle,
+		Size:        Size{Width: 1240, Height: 800},
+		MinSize:     Size{Width: 960, Height: 620},
+		Visible:     false,
+		Font:        fontBase,
+		Background:  SolidColorBrush{Color: colBg},
+		Layout:      VBox{MarginsZero: true, SpacingZero: true},
+		OnDropFiles: a.onDrop,
 		Children: []Widget{
 			// top bar
 			Composite{
@@ -236,109 +243,143 @@ func (a *App) build() error {
 						Layout: VBox{MarginsZero: true, SpacingZero: true},
 						Children: []Widget{
 							Label{Text: "NameSmith", Font: fontTitle, TextColor: colAccent},
-							Label{Text: "파일 이름 일괄 변경기 · 번호 붙이기 · 찾아 바꾸기 · 날짜 넣기", TextColor: colMuted, Font: fontSmall},
+							Label{Text: "파일 이름 일괄 변경기 · 중복 파일 찾기", TextColor: colMuted, Font: fontSmall},
+						},
+					},
+					Composite{MinSize: Size{Width: 18}, MaxSize: Size{Width: 18}},
+					Composite{
+						Layout: HBox{MarginsZero: true, Spacing: 4},
+						Children: []Widget{
+							RadioButton{AssignTo: &a.rbModeRename, Text: "이름 바꾸기", Font: fontModeTab,
+								MinSize: Size{Width: 132, Height: 36}, MaxSize: Size{Width: 132, Height: 36},
+								OnClicked: func() { a.setMode("rename") }},
+							RadioButton{AssignTo: &a.rbModeDupes, Text: "중복 파일 찾기", Font: fontModeTab,
+								MinSize: Size{Width: 132, Height: 36}, MaxSize: Size{Width: 132, Height: 36},
+								OnClicked: func() { a.setMode("dupes") }},
 						},
 					},
 					HSpacer{},
-					CheckBox{AssignTo: &a.cbRecursive, Text: "폴더 안의 폴더까지 (하위 폴더 포함)"},
-					PushButton{AssignTo: &a.btnAddFolder, Text: "폴더 추가…", MinSize: Size{Width: 104, Height: 32}, OnClicked: a.addFolder},
-					PushButton{AssignTo: &a.btnAddFiles, Text: "파일 추가…", MinSize: Size{Width: 104, Height: 32}, OnClicked: a.addFiles},
+					Composite{
+						AssignTo: &a.renameTools,
+						Layout:   HBox{MarginsZero: true, Spacing: 10},
+						Children: []Widget{
+							CheckBox{AssignTo: &a.cbRecursive, Text: "하위 폴더 포함"},
+							PushButton{AssignTo: &a.btnAddFolder, Text: "폴더 추가…", MinSize: Size{Width: 104, Height: 32}, OnClicked: a.addFolder},
+							PushButton{AssignTo: &a.btnAddFiles, Text: "파일 추가…", MinSize: Size{Width: 104, Height: 32}, OnClicked: a.addFiles},
+						},
+					},
 				},
 			},
 			Composite{Background: SolidColorBrush{Color: colLine}, MinSize: Size{Height: 1}, MaxSize: Size{Height: 1}},
 
-			// body
+			// rename page
 			Composite{
-				Layout: HBox{Margins: Margins{Left: 12, Top: 12, Right: 12, Bottom: 10}, Spacing: 12},
+				AssignTo: &a.renamePage,
+				Layout:   VBox{MarginsZero: true, SpacingZero: true},
 				Children: []Widget{
+					// body
 					Composite{
+						Layout: HBox{Margins: Margins{Left: 12, Top: 12, Right: 12, Bottom: 10}, Spacing: 12},
+						Children: []Widget{
+							Composite{
+								Background: SolidColorBrush{Color: colCard},
+								Layout:     VBox{Margins: Margins{Left: 12, Top: 10, Right: 12, Bottom: 12}, Spacing: 8},
+								Children: []Widget{
+									Composite{
+										Layout: HBox{MarginsZero: true, Spacing: 6},
+										Children: []Widget{
+											Label{Text: "파일 목록", Font: fontHeader},
+											Label{AssignTo: &a.listCount, TextColor: colMuted},
+											Label{AssignTo: &a.sortInfo, TextColor: colMuted, Font: fontSmall},
+											HSpacer{},
+											PushButton{AssignTo: &a.btnUp, Text: "▲ 위로", OnClicked: func() { a.move(-1) }},
+											PushButton{AssignTo: &a.btnDown, Text: "▼ 아래로", OnClicked: func() { a.move(1) }},
+											PushButton{AssignTo: &a.btnRemove, Text: "목록에서 빼기", OnClicked: a.removeSelected},
+											PushButton{AssignTo: &a.btnClear, Text: "모두 비우기", OnClicked: a.clearAll},
+										},
+									},
+									Composite{
+										AssignTo: &a.emptyHint,
+										Layout:   VBox{Spacing: 10},
+										Children: []Widget{
+											VSpacer{},
+											Label{Text: "파일이나 폴더를 여기로 끌어다 놓으세요", Font: fontHint, TextColor: colMuted, TextAlignment: AlignCenter},
+											Label{Text: "또는 위의 [파일 추가] · [폴더 추가] 버튼을 누르세요.", TextColor: colMuted, TextAlignment: AlignCenter},
+											Label{Text: "탐색기에서 폴더를 오른쪽 클릭해 'NameSmith로 이름 바꾸기'를 골라도 돼요.", TextColor: colGrayFg, Font: fontSmall, TextAlignment: AlignCenter},
+											VSpacer{},
+										},
+									},
+									TableView{
+										AssignTo:         &a.tv,
+										Visible:          false,
+										Model:            a.model,
+										CheckBoxes:       true,
+										MultiSelection:   true,
+										CustomRowHeight:  24,
+										ColumnsOrderable: false,
+										Columns: []TableViewColumn{
+											{Title: "현재 이름", Width: 220},
+											{Title: "새 이름", Width: 240},
+											{Title: "상태", Width: 170},
+											{Title: "수정한 날짜", Width: 116},
+											{Title: "크기", Width: 72, Alignment: AlignFar},
+											{Title: "폴더", Width: 260},
+										},
+										StyleCell:                a.styleCell,
+										ContextMenuItems:         tableMenu,
+										OnKeyDown:                a.onTableKey,
+										OnSelectedIndexesChanged: func() { a.updateChrome(a.readRules()) },
+										OnItemActivated:          a.openSelectedFolder,
+									},
+								},
+							},
+							ScrollView{
+								AssignTo:        &a.rulesPanel,
+								HorizontalFixed: true,
+								MinSize:         Size{Width: 400},
+								MaxSize:         Size{Width: 400},
+								Layout:          VBox{MarginsZero: true, Spacing: 10},
+								Children:        sections,
+							},
+						},
+					},
+
+					// bottom bar
+					Composite{Background: SolidColorBrush{Color: colLine}, MinSize: Size{Height: 1}, MaxSize: Size{Height: 1}},
+					Composite{
+						AssignTo:   &a.bottomBar,
 						Background: SolidColorBrush{Color: colCard},
-						Layout:     VBox{Margins: Margins{Left: 12, Top: 10, Right: 12, Bottom: 12}, Spacing: 8},
+						Layout:     HBox{Margins: Margins{Left: 18, Top: 10, Right: 18, Bottom: 10}, Spacing: 12},
 						Children: []Widget{
 							Composite{
-								Layout: HBox{MarginsZero: true, Spacing: 6},
+								Layout: VBox{MarginsZero: true, Spacing: 2, Alignment: AlignHNearVCenter},
 								Children: []Widget{
-									Label{Text: "파일 목록", Font: fontHeader},
-									Label{AssignTo: &a.listCount, TextColor: colMuted},
-									Label{AssignTo: &a.sortInfo, TextColor: colMuted, Font: fontSmall},
-									HSpacer{},
-									PushButton{AssignTo: &a.btnUp, Text: "▲ 위로", OnClicked: func() { a.move(-1) }},
-									PushButton{AssignTo: &a.btnDown, Text: "▼ 아래로", OnClicked: func() { a.move(1) }},
-									PushButton{AssignTo: &a.btnRemove, Text: "목록에서 빼기", OnClicked: a.removeSelected},
-									PushButton{AssignTo: &a.btnClear, Text: "모두 비우기", OnClicked: a.clearAll},
+									Composite{
+										Layout: HBox{MarginsZero: true, SpacingZero: true},
+										Children: []Widget{
+											Label{AssignTo: &a.status, Font: Font{Family: uiFont, PointSize: 10}, MinSize: Size{Width: 300}, EllipsisMode: EllipsisEnd},
+											HSpacer{},
+										},
+									},
+									LinkLabel{
+										Background:      stockWhite{},
+										MaxSize:         Size{Width: 640},
+										Font:            fontSmall,
+										Text:            `<a id="help">사용법</a>   ·   <a id="logs">바꾼 기록 보기</a>   ·   <a id="site">홈페이지 / 새 버전</a>   ·   v` + Version,
+										OnLinkActivated: a.onLink,
+									},
 								},
 							},
-							Composite{
-								AssignTo: &a.emptyHint,
-								Layout:   VBox{Spacing: 10},
-								Children: []Widget{
-									VSpacer{},
-									Label{Text: "파일이나 폴더를 여기로 끌어다 놓으세요", Font: fontHint, TextColor: colMuted, TextAlignment: AlignCenter},
-									Label{Text: "또는 위의 [파일 추가] · [폴더 추가] 버튼을 누르세요.", TextColor: colMuted, TextAlignment: AlignCenter},
-									Label{Text: "탐색기에서 폴더를 오른쪽 클릭해 'NameSmith로 이름 바꾸기'를 골라도 돼요.", TextColor: colGrayFg, Font: fontSmall, TextAlignment: AlignCenter},
-									VSpacer{},
-								},
-							},
-							TableView{
-								AssignTo:         &a.tv,
-								Visible:          false,
-								Model:            a.model,
-								CheckBoxes:       true,
-								MultiSelection:   true,
-								CustomRowHeight:  24,
-								ColumnsOrderable: false,
-								Columns: []TableViewColumn{
-									{Title: "현재 이름", Width: 220},
-									{Title: "새 이름", Width: 240},
-									{Title: "상태", Width: 170},
-									{Title: "수정한 날짜", Width: 116},
-									{Title: "크기", Width: 72, Alignment: AlignFar},
-									{Title: "폴더", Width: 260},
-								},
-								StyleCell:                a.styleCell,
-								ContextMenuItems:         tableMenu,
-								OnKeyDown:                a.onTableKey,
-								OnSelectedIndexesChanged: func() { a.updateChrome(a.readRules()) },
-								OnItemActivated:          a.openSelectedFolder,
-							},
+							ProgressBar{AssignTo: &a.progress, Visible: false, MinSize: Size{Width: 220, Height: 18}, MaxSize: Size{Width: 220, Height: 18}},
+							PushButton{AssignTo: &a.btnUndo, Text: "되돌리기", MinSize: Size{Width: 100, Height: 38}, OnClicked: a.undoLast},
+							PushButton{AssignTo: &a.btnRename, Text: "이름 바꾸기", Font: fontButton, MinSize: Size{Width: 190, Height: 38}, OnClicked: a.rename},
 						},
-					},
-					ScrollView{
-						AssignTo:        &a.rulesPanel,
-						HorizontalFixed: true,
-						MinSize:         Size{Width: 400},
-						MaxSize:         Size{Width: 400},
-						Layout:          VBox{MarginsZero: true, Spacing: 10},
-						Children:        sections,
 					},
 				},
 			},
 
-			// bottom bar
-			Composite{Background: SolidColorBrush{Color: colLine}, MinSize: Size{Height: 1}, MaxSize: Size{Height: 1}},
-			Composite{
-				AssignTo:   &a.bottomBar,
-				Background: SolidColorBrush{Color: colCard},
-				Layout:     HBox{Margins: Margins{Left: 18, Top: 10, Right: 18, Bottom: 10}, Spacing: 12},
-				Children: []Widget{
-					Composite{
-						Layout: VBox{MarginsZero: true, Spacing: 2, Alignment: AlignHNearVCenter},
-						Children: []Widget{
-							Label{AssignTo: &a.status, Font: Font{Family: uiFont, PointSize: 10}, MinSize: Size{Width: 560}},
-							LinkLabel{
-								MaxSize:         Size{Width: 640},
-								Font:            fontSmall,
-								Text:            `<a id="help">사용법</a>   ·   <a id="logs">바꾼 기록 보기</a>   ·   <a id="site">홈페이지 / 새 버전</a>   ·   v` + Version,
-								OnLinkActivated: a.onLink,
-							},
-						},
-					},
-					HSpacer{},
-					ProgressBar{AssignTo: &a.progress, Visible: false, MinSize: Size{Width: 220, Height: 18}, MaxSize: Size{Width: 220, Height: 18}},
-					PushButton{AssignTo: &a.btnUndo, Text: "되돌리기", MinSize: Size{Width: 100, Height: 38}, OnClicked: a.undoLast},
-					PushButton{AssignTo: &a.btnRename, Text: "이름 바꾸기", Font: fontButton, MinSize: Size{Width: 190, Height: 38}, OnClicked: a.rename},
-				},
-			},
+			// duplicates page
+			a.d.widget(),
 		},
 	}.Create()
 }

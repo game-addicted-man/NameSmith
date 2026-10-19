@@ -18,6 +18,7 @@ const (
 	appTitle  = "NameSmith - 파일 이름 일괄 변경기"
 	repoURL   = "https://github.com/game-addicted-man/NameSmith"
 	helpURL   = repoURL + "#사용법"
+	dupesHelp = repoURL + "#중복-파일-찾기"
 	issuesURL = repoURL + "/issues"
 )
 
@@ -62,4 +63,4 @@ func configDir() string {
 func journalPath() string {
 	return filepath.Join(dataDir(), fmt.Sprintf("journal-%d.json", os.Getpid()))
 }
-func logDir() string      { return filepath.Join(dataDir(), "기록") }
+func logDir() string { return filepath.Join(dataDir(), "기록") }

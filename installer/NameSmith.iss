@@ -4,7 +4,7 @@
 ; Needs dist\NameSmith.exe (see README "직접 빌드하기").
 
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.1.0"
 #endif
 #ifndef NumVersion
   #define NumVersion AppVersion
@@ -22,7 +22,7 @@ AppPublisher=game-addicted-man
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
-AppComments=파일 이름 일괄 변경기 - 번호 붙이기, 찾아 바꾸기, 날짜 넣기
+AppComments=파일 이름 일괄 변경기, 중복 파일 찾기
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -37,7 +37,7 @@ WizardStyle=modern
 ShowLanguageDialog=auto
 SetupIconFile=..\build\icon.ico
 UninstallDisplayIcon={app}\{#AppExe}
-UninstallDisplayName={#AppName} - 파일 이름 일괄 변경기
+UninstallDisplayName={#AppName} - 파일 이름 일괄 변경기 · 중복 파일 찾기
 OutputDir=..\dist
 OutputBaseFilename=NameSmith-Setup-{#AppVersion}
 Compression=lzma2/ultra64
@@ -57,16 +57,18 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [CustomMessages]
 korean.TaskDesktop=바탕 화면에 바로 가기 만들기
-korean.TaskFolderMenu=폴더를 오른쪽 클릭하면 "NameSmith로 이름 바꾸기" 보이기
+korean.TaskFolderMenu=폴더를 오른쪽 클릭하면 "NameSmith로 이름 바꾸기 / 중복 파일 찾기" 보이기
 korean.TaskSendTo=파일을 오른쪽 클릭 > 보내기 메뉴에 NameSmith 넣기 (여러 파일을 한 번에)
 korean.Extra=추가 기능:
 korean.FolderVerb=NameSmith로 이름 바꾸기
+korean.DupesVerb=NameSmith로 중복 파일 찾기
 korean.RunNow=NameSmith 바로 실행
 english.TaskDesktop=Create a desktop shortcut
-english.TaskFolderMenu=Add "Rename with NameSmith" when right-clicking a folder
+english.TaskFolderMenu=Add "Rename with NameSmith / Find duplicates" when right-clicking a folder
 english.TaskSendTo=Add NameSmith to the "Send to" menu (many files at once)
 english.Extra=Extras:
 english.FolderVerb=Rename with NameSmith
+english.DupesVerb=Find duplicates with NameSmith
 english.RunNow=Start NameSmith now
 
 [Tasks]
@@ -79,7 +81,7 @@ Source: "..\dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "파일 이름 일괄 변경기"
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "파일 이름 일괄 변경기 · 중복 파일 찾기"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 Name: "{usersendto}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: sendto
 
@@ -92,6 +94,14 @@ Root: HKA; Subkey: "Software\Classes\Directory\shell\NameSmith\command"; ValueTy
 Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NameSmith"; ValueType: string; ValueName: ""; ValueData: "{cm:FolderVerb}"; Flags: uninsdeletekey; Tasks: foldermenu
 Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NameSmith"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"",0"; Tasks: foldermenu
 Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NameSmith\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%V"""; Tasks: foldermenu
+
+; 중복 파일 찾기 on a folder, and on empty space inside a folder
+Root: HKA; Subkey: "Software\Classes\Directory\shell\NameSmithDupes"; ValueType: string; ValueName: ""; ValueData: "{cm:DupesVerb}"; Flags: uninsdeletekey; Tasks: foldermenu
+Root: HKA; Subkey: "Software\Classes\Directory\shell\NameSmithDupes"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"",0"; Tasks: foldermenu
+Root: HKA; Subkey: "Software\Classes\Directory\shell\NameSmithDupes\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" --dupes ""%1"""; Tasks: foldermenu
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NameSmithDupes"; ValueType: string; ValueName: ""; ValueData: "{cm:DupesVerb}"; Flags: uninsdeletekey; Tasks: foldermenu
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NameSmithDupes"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"",0"; Tasks: foldermenu
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NameSmithDupes\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" --dupes ""%V"""; Tasks: foldermenu
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:RunNow}"; Flags: nowait postinstall skipifsilent

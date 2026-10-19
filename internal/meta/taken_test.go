@@ -197,3 +197,41 @@ func TestGarbageIsSafe(t *testing.T) {
 		t.Error("non-media extension should be ignored")
 	}
 }
+
+// tiffWithOrientation builds a TIFF block whose IFD0 has only the
+// Orientation tag.
+func tiffWithOrientation(bo binary.ByteOrder, orient uint16) []byte {
+	var b bytes.Buffer
+	if bo == binary.LittleEndian {
+		b.WriteString("II")
+	} else {
+		b.WriteString("MM")
+	}
+	binary.Write(&b, bo, uint16(42))
+	binary.Write(&b, bo, uint32(8))
+	binary.Write(&b, bo, uint16(1))      // one entry
+	binary.Write(&b, bo, uint16(0x0112)) // Orientation
+	binary.Write(&b, bo, uint16(3))      // SHORT
+	binary.Write(&b, bo, uint32(1))
+	binary.Write(&b, bo, orient)
+	binary.Write(&b, bo, uint16(0))
+	binary.Write(&b, bo, uint32(0)) // next IFD
+	return b.Bytes()
+}
+
+func TestOrientation(t *testing.T) {
+	for _, bo := range []binary.ByteOrder{binary.LittleEndian, binary.BigEndian} {
+		for _, o := range []uint16{1, 3, 6, 8} {
+			i := Read(write(t, "o.jpg", jpegWithExif(tiffWithOrientation(bo, o))))
+			if i.Orientation != int(o) || i.HasTaken {
+				t.Errorf("%v orientation %d: got %+v", bo, o, i)
+			}
+		}
+	}
+	if i := Read(write(t, "bad.jpg", jpegWithExif(tiffWithOrientation(binary.LittleEndian, 9)))); i.Orientation != 0 {
+		t.Errorf("invalid orientation kept: %+v", i)
+	}
+	if i := Read(write(t, "dated.jpg", jpegWithExif(tiffWithDate(binary.LittleEndian, "2019:08:15 10:20:30")))); !i.HasTaken || i.Orientation != 0 {
+		t.Errorf("date only: %+v", i)
+	}
+}

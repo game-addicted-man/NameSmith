@@ -44,11 +44,11 @@ const (
 type ExtMode int
 
 const (
-	ExtKeep  ExtMode = iota // 그대로
-	ExtLower                // 소문자로
-	ExtUpper                // 대문자로
-	ExtSet                  // 다른 확장자로 바꾸기
-	ExtRemove               // 확장자 없애기
+	ExtKeep   ExtMode = iota // 그대로
+	ExtLower                 // 소문자로
+	ExtUpper                 // 대문자로
+	ExtSet                   // 다른 확장자로 바꾸기
+	ExtRemove                // 확장자 없애기
 )
 
 // ReplaceRule is "1. 찾아 바꾸기".
