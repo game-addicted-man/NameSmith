@@ -1,0 +1,14 @@
+# build output
+/dist/
+*.exe
+
+# editors / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# local Go helper module downloads
+build/winres/go.sum

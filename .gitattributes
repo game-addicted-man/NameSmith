@@ -1,2 +1,10 @@
-# Auto detect text files and perform LF normalization
 * text=auto
+*.go text eol=lf
+go.mod text eol=lf
+*.iss text eol=crlf
+build/portable-readme.txt text eol=crlf
+*.syso binary
+*.ico binary
+*.png binary
+# vendored code is kept byte-for-byte
+vendor/** -text

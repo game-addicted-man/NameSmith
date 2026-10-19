@@ -1,0 +1,100 @@
+name: Build
+
+# Every push to main is built and tested on Windows. When the version in the
+# VERSION file has no release yet, the build is published as a new release
+# (so releasing = changing VERSION and pushing).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build, test and package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false # dependencies are vendored
+
+      - name: Read version
+        id: v
+        shell: pwsh
+        run: |
+          $ver = (Get-Content VERSION -Raw).Trim()
+          if ($ver -notmatch '^\d+\.\d+\.\d+$') { throw "VERSION must look like 1.2.3, got '$ver'" }
+          "ver=$ver" >> $env:GITHUB_OUTPUT
+          "Version: $ver"
+
+      - name: Unit tests
+        run: go test ./internal/...
+
+      - name: Windows resources (icon, manifest, version info)
+        working-directory: build/winres
+        run: go run -mod=mod . -version ${{ steps.v.outputs.ver }} -arch amd64
+
+      - name: Build NameSmith.exe
+        run: go build -trimpath -ldflags "-s -w -H windowsgui -X github.com/game-addicted-man/NameSmith/internal/ui.Version=${{ steps.v.outputs.ver }}" -o dist/NameSmith.exe ./cmd/NameSmith
+
+      - name: UI test (rename 31 files, undo, close)
+        run: go run ./tools/uitest -exe dist\NameSmith.exe -out dist\uitest
+
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc /Q "/DAppVersion=${{ steps.v.outputs.ver }}" installer\NameSmith.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          $p = "dist\portable"
+          New-Item -ItemType Directory -Force $p | Out-Null
+          Copy-Item dist\NameSmith.exe $p
+          Copy-Item LICENSE "$p\LICENSE.txt"
+          Copy-Item build\portable-readme.txt "$p\읽어보세요.txt"
+          Compress-Archive -Path "$p\*" -DestinationPath "dist\NameSmith-${{ steps.v.outputs.ver }}-portable.zip" -Force
+
+      - name: Install / uninstall test
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\NameSmith-Setup-*.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=desktopicon,foldermenu,sendto' -Wait
+          $dir = Join-Path $env:LOCALAPPDATA "Programs\NameSmith"
+          if (-not (Test-Path "$dir\NameSmith.exe")) { throw "not installed in $dir" }
+          if (-not (Test-Path "HKCU:\Software\Classes\Directory\shell\NameSmith\command")) { throw "folder menu missing" }
+          Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait
+          for ($i = 0; $i -lt 30 -and (Test-Path "$dir\NameSmith.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$dir\NameSmith.exe") { throw "uninstall left files behind" }
+          if (Test-Path "HKCU:\Software\Classes\Directory\shell\NameSmith") { throw "uninstall left the folder menu" }
+          "install / uninstall OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NameSmith-${{ steps.v.outputs.ver }}
+          path: |
+            dist/NameSmith-Setup-*.exe
+            dist/NameSmith-*-portable.zip
+            dist/uitest/*.png
+
+      - name: Publish release (new VERSION only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ steps.v.outputs.ver }}"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { "Release $tag already exists - nothing to publish."; exit 0 }
+          $files = @(Get-ChildItem dist\NameSmith-Setup-*.exe) + @(Get-ChildItem dist\NameSmith-*-portable.zip) | ForEach-Object { $_.FullName }
+          gh release create $tag @files --target "${{ github.sha }}" --title "NameSmith $tag" --notes-file .github\release-notes.md
