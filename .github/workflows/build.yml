@@ -35,25 +35,38 @@ jobs:
           "Version: $ver"
 
       - name: Unit tests
-        run: go test ./internal/...
+        shell: pwsh
+        run: |
+          go test ./internal/... 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\test.log"
+          if ($LASTEXITCODE -ne 0) { ./build/ci-fail.ps1 "Unit tests" "$env:RUNNER_TEMP\test.log"; exit 1 }
 
       - name: Windows resources (icon, manifest, version info)
+        shell: pwsh
         working-directory: build/winres
-        run: go run -mod=mod . -version ${{ steps.v.outputs.ver }} -arch amd64
+        run: |
+          go run -mod=mod . -version ${{ steps.v.outputs.ver }} -arch amd64 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\winres.log"
+          if ($LASTEXITCODE -ne 0) { ../ci-fail.ps1 "Windows resources" "$env:RUNNER_TEMP\winres.log"; exit 1 }
 
       - name: Build NameSmith.exe
-        run: go build -trimpath -ldflags "-s -w -H windowsgui -X github.com/game-addicted-man/NameSmith/internal/ui.Version=${{ steps.v.outputs.ver }}" -o dist/NameSmith.exe ./cmd/NameSmith
+        shell: pwsh
+        run: |
+          go build -trimpath -ldflags "-s -w -H windowsgui -X github.com/game-addicted-man/NameSmith/internal/ui.Version=${{ steps.v.outputs.ver }}" -o dist/NameSmith.exe ./cmd/NameSmith 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\build.log"
+          if ($LASTEXITCODE -ne 0) { ./build/ci-fail.ps1 "Build" "$env:RUNNER_TEMP\build.log"; exit 1 }
 
       - name: UI test (rename 31 files, undo, close)
-        run: go run ./tools/uitest -exe dist\NameSmith.exe -out dist\uitest
+        shell: pwsh
+        run: |
+          go run ./tools/uitest -exe dist\NameSmith.exe -out dist\uitest 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\uitest.log"
+          if ($LASTEXITCODE -ne 0) { ./build/ci-fail.ps1 "UI test" "$env:RUNNER_TEMP\uitest.log"; exit 1 }
 
       - name: Installer (Inno Setup)
         shell: pwsh
         run: |
+          # Inno Setup 6.3+ is needed (x64compatible); install or upgrade it.
+          choco upgrade innosetup -y --no-progress | Out-Null
           $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
-          & $iscc /Q "/DAppVersion=${{ steps.v.outputs.ver }}" installer\NameSmith.iss
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $iscc "/DAppVersion=${{ steps.v.outputs.ver }}" installer\NameSmith.iss 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\iscc.log"
+          if ($LASTEXITCODE -ne 0) { ./build/ci-fail.ps1 "Installer" "$env:RUNNER_TEMP\iscc.log"; exit 1 }
 
       - name: Portable zip
         shell: pwsh
@@ -80,6 +93,7 @@ jobs:
           "install / uninstall OK"
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: NameSmith-${{ steps.v.outputs.ver }}
           path: |

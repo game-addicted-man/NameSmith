@@ -461,6 +461,7 @@ func TestCollect(t *testing.T) {
 	touch(t, root, "b10.txt", "")
 	touch(t, root, "b2.txt", "")
 	touch(t, root, ".hidden", "")
+	hide(t, filepath.Join(root, ".hidden"))
 	os.Mkdir(filepath.Join(root, "sub"), 0o755)
 	touch(t, filepath.Join(root, "sub"), "inner.txt", "")
 	known := map[string]bool{}
